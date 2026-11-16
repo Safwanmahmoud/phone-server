@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Phone Server</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script>
+    try {
+      var t = localStorage.getItem('psTheme') || 'dark';
+      if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div id="login" class="login" hidden></div>
+
+  <div id="shell" class="shell" hidden>
+    <nav class="nav" aria-label="Main">
+      <a class="brand" href="#/overview"><span class="brand-mark" data-icon="phone"></span><span>Phone Server</span></a>
+      <a class="nav-link" data-route="overview" href="#/overview"><span data-icon="overview"></span><span>Overview</span></a>
+      <a class="nav-link" data-route="apps" href="#/apps"><span data-icon="apps"></span><span>Apps</span></a>
+      <a class="nav-link" data-route="terminal" href="#/terminal"><span data-icon="terminal"></span><span>Terminal</span></a>
+      <a class="nav-link" data-route="settings" href="#/settings"><span data-icon="settings"></span><span>Settings</span></a>
+      <span class="spacer"></span>
+      <button id="theme-toggle" class="nav-link theme-toggle" type="button"></button>
+    </nav>
+    <main id="view" class="view" tabindex="-1"></main>
+    <div id="terminal-host" class="terminal-host" hidden></div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="dialog" class="dialog"></dialog>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

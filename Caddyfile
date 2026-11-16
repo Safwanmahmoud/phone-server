@@ -1,0 +1,22 @@
+# The only thing listening on the network. The dashboard (127.0.0.1) and the
+# terminal (a Unix socket) are reachable only through here.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:{$PS_PORT:8080} {
+	encode gzip
+
+	handle /terminal* {
+		forward_auth 127.0.0.1:{$PS_DASHBOARD_PORT:8000} {
+			uri /api/auth/check
+		}
+		reverse_proxy unix/{$PS_DATA}/ttyd.sock
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:{$PS_DASHBOARD_PORT:8000}
+	}
+}
