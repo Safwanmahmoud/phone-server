@@ -1,6 +1,6 @@
 # Phone Server
 
-A small self-hosted dashboard for running Python apps on an Android phone, inside Termux.
+A small self-hosted dashboard for running Python and Node.js apps on an Android phone, inside Termux.
 
 From the dashboard you can:
 
@@ -86,17 +86,27 @@ Android stops apps in the background. To keep the server up:
 
 The app needs to listen on `0.0.0.0:$PORT`. The dashboard sets `PORT` for it.
 
+A repository with a `package.json` and no Python packaging files is treated as **Node.js**. Anything
+else is treated as **Python**.
+
+**Node.js:** the phone runs `npm ci` (or `npm install` without a lockfile), with dev dependencies so
+build tools like Vite are there. It runs that again only when the lockfile changes. If there's a `build`
+script, it runs `npm run build` on every deploy, with the app's environment variables available. The
+app runs with `NODE_ENV=production` unless you set it yourself.
+
+**Python:** requirements come from `requirements.txt`, or from `pyproject.toml`/`setup.py` with
+`pip install .`, in a venv for each app. They're reinstalled only when `requirements.txt` changes.
+
 To work out how to start the app, the dashboard checks these in order:
 
 1. A `Procfile` with a `web:` line
-2. FastAPI, Starlette or Quart in `app/main.py`, `main.py`, `app.py` or `server.py`: runs `python -m uvicorn <module>:app`
-3. Flask: runs `gunicorn` if it's installed, otherwise `flask run`
-4. Otherwise `python main.py` or `python app.py`
+2. Node.js: the `start` script (a plain `node server.js` runs directly, anything else through
+   `npm start`), then `main`, `server.js` or `index.js`
+3. Python: FastAPI, Starlette or Quart in `app/main.py`, `main.py`, `app.py` or `server.py` runs
+   `python -m uvicorn <module>:app`. Flask runs `gunicorn` if it's installed, otherwise `flask run`.
+   Otherwise `python main.py` or `python app.py`.
 
 You can always set your own start command in the app's Settings.
-
-Requirements are installed from `requirements.txt`, or from `pyproject.toml`/`setup.py` with `pip install .`.
-They're only reinstalled when `requirements.txt` changes.
 
 **Private repositories:** go to Settings → GitHub access → *Create a key for this phone*, and add the key at
 <https://github.com/settings/ssh/new>. Then use the `git@github.com:you/repo.git` URL.
@@ -120,7 +130,7 @@ They're only reinstalled when `requirements.txt` changes.
 ```
 server/            dashboard (Starlette)
   main.py          routes, sign-in check, exception handlers
-  deploy.py        clone/fetch → venv → pip → detect start command → PM2 → health check
+  deploy.py        clone/fetch → pip or npm (+ build) → detect start command → PM2 → health check
   pm2.py           talks to the PM2 bridge, or the pm2 command if the bridge is down
   apps.py          validation and API errors
   system.py        memory, storage, CPU clock, temperatures, battery

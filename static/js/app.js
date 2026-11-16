@@ -380,7 +380,7 @@ function viewOverview(main) {
 function viewApps(main) {
   const banner = h('div');
   const list = h('div');
-  main.append(pageHead('Apps', 'Python apps deployed from Git and kept running by PM2.',
+  main.append(pageHead('Apps', 'Python and Node.js apps deployed from Git and kept running by PM2.',
     h('button', { class: 'btn btn-primary', onclick: openNewApp }, icon('plus'), 'New app')), banner, list);
   return poll(async () => {
     const data = await api('/api/apps');
@@ -388,7 +388,7 @@ function viewApps(main) {
     if (!data.apps.length) {
       list.replaceChildren(h('div', { class: 'card empty' },
         h('h2', {}, 'No apps yet'),
-        h('p', { class: 'muted' }, 'Point the phone at a Git repository. It clones it, installs requirements.txt, and keeps the app running.'),
+        h('p', { class: 'muted' }, 'Point the phone at a Git repository. It clones it, installs requirements.txt or package.json, builds it if needed, and keeps the app running.'),
         h('button', { class: 'btn btn-primary', onclick: openNewApp }, icon('plus'), 'New app')));
     } else {
       list.replaceChildren(h('div', { class: 'card rows' }, data.apps.map(appRow)));
@@ -607,7 +607,7 @@ function deploymentsTab(body, name, depId) {
     drawList();
     history.replaceState(null, '', `#/apps/${enc(name)}/deployments/${id}`);
   };
-  const trigger = (t) => ({ created: 'First deploy', manual: 'Redeploy' }[t] || t);
+  const trigger = (t) => ({ created: 'First deploy', manual: 'Redeploy', cli: 'Deployed from the terminal' }[t] || t);
   function drawList() {
     list.replaceChildren(...(items.length ? items.map((d) => h('button', {
       class: `dep-item ${d.id === selected ? 'active' : ''}`, type: 'button', onclick: () => select(d.id),
@@ -652,7 +652,7 @@ function drawSettings(body, app) {
   const save = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save');
   const cmdHint = app.detected_cmd
     ? `Leave empty to use the detected command: ${app.detected_cmd}`
-    : 'Leave empty to detect it from a Procfile, main.py or app.py.';
+    : 'Leave empty to detect it from a Procfile, package.json, main.py or app.py.';
 
   const form = h('form', {
     class: 'card form',

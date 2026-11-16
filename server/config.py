@@ -38,6 +38,7 @@ def _bin(name: str) -> str:
 BASH = _bin("bash")
 GIT = _bin("git")
 PM2 = _bin("pm2")
+NPM = _bin("npm")
 SSH = _bin("ssh")
 SSH_KEYGEN = _bin("ssh-keygen")
 # The system Python, not the dashboard's own venv: app venvs are created from it.

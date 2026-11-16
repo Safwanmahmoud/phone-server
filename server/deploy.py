@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import db, pm2
 from .apps import ApiError
-from .config import APPS_DIR, BASH, DATA, GIT, HOME, PYTHON, clean_env, git_env
+from .config import APPS_DIR, BASH, DATA, GIT, HOME, NPM, PYTHON, clean_env, git_env
 
 
 class DeployError(ApiError):
@@ -175,7 +175,62 @@ async def _deploy(dep_id: int, name: str, log: DeployLog) -> str | None:
     db.update_deployment(dep_id, commit_sha=sha or None, commit_msg=subject[:200] or None)
     log.line(f"At {sha[:7]} {subject}")
 
-    log.step("Installing requirements")
+    kind = detect_kind(p.repo)
+    if kind == "node":
+        await _install_node(app, p, log)
+    else:
+        await _install_python(p, sha, log)
+
+    log.step("Start command")
+    detected = detect_start_cmd(p.repo, p.venv) or ""
+    db.update_app(name, detected_cmd=detected)
+    app = db.get_app(name)
+    if app["start_cmd"]:
+        log.line(f"Using your start command: {app['start_cmd']}")
+    elif detected:
+        log.line(f"Detected: {detected}")
+    else:
+        raise DeployError("Couldn't work out how to start this app. Add a Procfile with a web: line, a \"start\" "
+                          "script in package.json, or set a start command in the app's Settings, then redeploy.")
+
+    log.step("Starting")
+    try:
+        await start_process(app)
+    except pm2.PM2Error as e:
+        raise DeployError(f"PM2 couldn't start the app: {e}") from None
+    log.line(f"Started under PM2 as {name}, port {app['port']}.")
+
+    log.step("Checking it's up")
+    return await _wait_until_up(app, log)
+
+
+PYTHON_MARKERS = ("requirements.txt", "pyproject.toml", "setup.py", "Pipfile")
+
+
+def detect_kind(repo: Path) -> str:
+    """'node' for a package.json project with no Python packaging files, otherwise 'python'."""
+    if (repo / "package.json").is_file() and not any((repo / m).is_file() for m in PYTHON_MARKERS):
+        return "node"
+    return "python"
+
+
+def _package_json(repo: Path) -> dict:
+    try:
+        data = json.loads((repo / "package.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _node_env(p: AppPaths, extra: dict | None = None) -> dict:
+    env = clean_env(extra)
+    env.update({"npm_config_update_notifier": "false", "npm_config_fund": "false", "npm_config_audit": "false"})
+    env["PATH"] = f"{p.repo / 'node_modules' / '.bin'}:{env['PATH']}"
+    return env
+
+
+async def _install_python(p: AppPaths, sha: str, log: DeployLog) -> None:
+    log.step("Installing requirements (Python)")
     venv_python = p.venv / "bin" / "python"
     if not venv_python.exists():
         await _must([PYTHON, "-m", "venv", str(p.venv)], log, "Creating the virtual environment", env=clean_env())
@@ -193,27 +248,24 @@ async def _deploy(dep_id: int, name: str, log: DeployLog) -> str | None:
                     cwd=p.repo, env=venv_env, timeout=3600)
         p.deps_stamp.write_text(stamp)
 
-    log.step("Start command")
-    detected = detect_start_cmd(p.repo, p.venv) or ""
-    db.update_app(name, detected_cmd=detected)
-    app = db.get_app(name)
-    if app["start_cmd"]:
-        log.line(f"Using your start command: {app['start_cmd']}")
-    elif detected:
-        log.line(f"Detected: {detected}")
+
+async def _install_node(app: dict, p: AppPaths, log: DeployLog) -> None:
+    log.step("Installing dependencies (Node.js)")
+    lock = next((p.repo / f for f in ("package-lock.json", "npm-shrinkwrap.json") if (p.repo / f).is_file()), None)
+    stamp = "npm:" + hashlib.sha256((lock or p.repo / "package.json").read_bytes()).hexdigest()
+    if (p.repo / "node_modules").is_dir() and p.deps_stamp.exists() and p.deps_stamp.read_text() == stamp:
+        log.line(f"{(lock or p.repo / 'package.json').name} hasn't changed since the last deploy. Skipping npm install.")
     else:
-        raise DeployError("Couldn't work out how to start this app. Add a Procfile with a web: line, "
-                          "or set a start command in the app's Settings, then redeploy.")
+        p.deps_stamp.unlink(missing_ok=True)
+        # Dev dependencies are included on purpose: build tools like Vite live there.
+        cmd = [NPM, "ci"] if lock else [NPM, "install"]
+        await _must(cmd, log, "npm install", cwd=p.repo, env=_node_env(p), timeout=3600)
+        p.deps_stamp.write_text(stamp)
 
-    log.step("Starting")
-    try:
-        await start_process(app)
-    except pm2.PM2Error as e:
-        raise DeployError(f"PM2 couldn't start the app: {e}") from None
-    log.line(f"Started under PM2 as {name}, port {app['port']}.")
-
-    log.step("Checking it's up")
-    return await _wait_until_up(app, log)
+    if "build" in (_package_json(p.repo).get("scripts") or {}):
+        log.step("Building")
+        # The app's own variables are passed in, since bundlers bake some of them in at build time.
+        await _must([NPM, "run", "build"], log, "npm run build", cwd=p.repo, env=_node_env(p, app["env"]), timeout=1800)
 
 
 def _install_plan(p: AppPaths, sha: str) -> tuple[list[str] | None, str]:
@@ -233,6 +285,8 @@ def detect_start_cmd(repo: Path, venv: Path) -> str | None:
             kind, sep, cmd = line.partition(":")
             if sep and kind.strip() == "web" and cmd.strip():
                 return cmd.strip()
+    if detect_kind(repo) == "node":
+        return _detect_node_cmd(repo)
     candidates = (("app/main.py", "app.main"), ("main.py", "main"), ("app.py", "app"),
                   ("server.py", "server"), ("asgi.py", "asgi"), ("wsgi.py", "wsgi"))
     for rel, module in candidates:
@@ -252,11 +306,31 @@ def detect_start_cmd(repo: Path, venv: Path) -> str | None:
     return None
 
 
+def _detect_node_cmd(repo: Path) -> str | None:
+    pkg = _package_json(repo)
+    start = str((pkg.get("scripts") or {}).get("start") or "").strip()
+    if start:
+        # "node server.js" is run directly: one process instead of npm plus node.
+        if re.fullmatch(r"node(\s+[\w./@:=-]+)+", start):
+            return start
+        return "npm start"
+    main = pkg.get("main") if isinstance(pkg.get("main"), str) else None
+    for rel in filter(None, (main, "server.js", "index.js", "app.js", "main.js")):
+        if (repo / rel).is_file():
+            return f"node {rel}"
+    return None
+
+
 def write_ecosystem(app: dict, cmd: str) -> Path:
     p = paths(app["name"])
     env = clean_env(app["env"])
-    env.update({"PORT": str(app["port"]), "VIRTUAL_ENV": str(p.venv), "PYTHONUNBUFFERED": "1"})
-    env["PATH"] = f"{p.venv / 'bin'}:{env['PATH']}"
+    env["PORT"] = str(app["port"])
+    if detect_kind(p.repo) == "node":
+        env.setdefault("NODE_ENV", "production")
+        env["PATH"] = f"{p.repo / 'node_modules' / '.bin'}:{env['PATH']}"
+    else:
+        env.update({"VIRTUAL_ENV": str(p.venv), "PYTHONUNBUFFERED": "1"})
+        env["PATH"] = f"{p.venv / 'bin'}:{env['PATH']}"
     # `exec` lets PM2 signal the app directly instead of a wrapping shell,
     # unless the command chains several steps.
     script = cmd if re.search(r"[;&|]", cmd) else f"exec {cmd}"
