@@ -12,7 +12,8 @@ for pkg in python git nodejs-lts ttyd caddy openssh; do
   dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
 done
 if ((${#missing[@]})); then
-  yes | pkg install -y "${missing[@]}"
+  # Not `yes | pkg …`: with pipefail, yes dying of SIGPIPE would abort the script.
+  DEBIAN_FRONTEND=noninteractive pkg install -y "${missing[@]}" </dev/null
 fi
 command -v pm2 >/dev/null || npm install -g pm2
 

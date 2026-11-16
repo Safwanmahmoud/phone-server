@@ -111,6 +111,26 @@ You can always set your own start command in the app's Settings.
 **Private repositories:** go to Settings → GitHub access → *Create a key for this phone*, and add the key at
 <https://github.com/settings/ssh/new>. Then use the `git@github.com:you/repo.git` URL.
 
+**Deploying from the terminal:** `cd ~/phone-server && .venv/bin/python -m server.cli deploy <app>`
+runs the same pipeline, prints the log, and shows up in the dashboard's deploy history.
+
+### PostgreSQL
+
+To give apps a database on the phone:
+
+```sh
+bash ~/phone-server/scripts/setup-postgres.sh                              # once
+cd ~/phone-server && .venv/bin/python -m server.cli create-db <app>        # per app
+```
+
+The setup script installs PostgreSQL and runs it under PM2 as `ps-postgres`. The cluster lives in
+`~/.phone-server/postgres`, listens on 127.0.0.1:5432 only, and is tuned for a phone: small memory,
+and as few background processes as possible.
+`create-db` makes a database and login named after the app (dashes become underscores), with a random
+password. It sets the app's `DATABASE_URL` without printing the password. Redeploy the app, or press
+Save in its Settings, to use the new database. `psql -U postgres` works on the phone without a password.
+Postgres runs about 9 processes, so turn off the phantom process killer (above).
+
 **Packages that need Rust** (`pydantic-core`, and so FastAPI; `cryptography`; `orjson`): run
 `pkg install rust` first. Expect the first install to take a long time on a phone.
 

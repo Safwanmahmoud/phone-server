@@ -20,7 +20,7 @@ PASSWORD_FILE = DATA / "password.json"
 PUBLIC_PORT = int(os.environ.get("PS_PORT", "8080"))
 DASHBOARD_PORT = int(os.environ.get("PS_DASHBOARD_PORT", "8000"))
 APP_PORTS = range(8100, 8200)
-RESERVED_PORTS = {PUBLIC_PORT, DASHBOARD_PORT, 8022}
+RESERVED_PORTS = {PUBLIC_PORT, DASHBOARD_PORT, 8022, 5432}
 
 # PM2 processes that make up the dashboard itself (see ecosystem.config.js).
 SYSTEM_SERVICES = {
@@ -28,7 +28,11 @@ SYSTEM_SERVICES = {
     "ps-agent": "PM2 bridge",
     "ps-caddy": "Web gateway (Caddy)",
     "ps-terminal": "Terminal (ttyd)",
+    "ps-postgres": "PostgreSQL",
 }
+# Shown only once set up (scripts/setup-postgres.sh).
+OPTIONAL_SERVICES = {"ps-postgres"}
+POSTGRES_PORT = 5432
 
 
 def _bin(name: str) -> str:

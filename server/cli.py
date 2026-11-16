@@ -46,6 +46,60 @@ def deploy_app(name: str) -> int:
 
     return asyncio.run(run())
 
+
+# Runs inside psql so the password never appears on a command line.
+CREATE_DB_SQL = r"""
+\set ON_ERROR_STOP on
+\set role '{role}'
+\set pw '{password}'
+SELECT NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') AS new_role \gset
+\if :new_role
+CREATE ROLE :"role" LOGIN PASSWORD :'pw';
+\else
+ALTER ROLE :"role" WITH LOGIN PASSWORD :'pw';
+\endif
+SELECT NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'role') AS new_db \gset
+\if :new_db
+CREATE DATABASE :"role" OWNER :"role";
+\endif
+"""
+
+
+def create_db(name: str, replace: bool) -> int:
+    """Give an app its own database on the phone's Postgres and set its DATABASE_URL."""
+    import secrets
+    import subprocess
+
+    from . import db
+    from .config import POSTGRES_PORT, clean_env
+
+    app = db.get_app(name)
+    if not app:
+        print(f"There's no app called {name}.", file=sys.stderr)
+        return 1
+    if "DATABASE_URL" in app["env"] and not replace:
+        print(f"{name} already has a DATABASE_URL. Use --replace to point it at a new local database.", file=sys.stderr)
+        return 1
+    role = name.replace("-", "_")
+    password = secrets.token_urlsafe(24)  # letters, digits, - and _: safe inside the SQL and the URL
+    # The superuser is trusted only over the local Unix socket (TCP always needs a password).
+    result = subprocess.run(
+        ["psql", "-X", "-q", "-U", "postgres", "-p", str(POSTGRES_PORT), "-d", "postgres"],
+        input=CREATE_DB_SQL.format(role=role, password=password), text=True, capture_output=True,
+        env=clean_env({"PGCONNECT_TIMEOUT": "10"}),
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        print(f"Couldn't create the database: {detail}", file=sys.stderr)
+        print("Is Postgres set up? Run: bash ~/phone-server/scripts/setup-postgres.sh", file=sys.stderr)
+        return 1
+    env = dict(app["env"])
+    env["DATABASE_URL"] = f"postgresql://{role}:{password}@127.0.0.1:{POSTGRES_PORT}/{role}"
+    db.update_app(name, env=env)
+    print(f"Created database {role} and set DATABASE_URL for {name} (the password is only stored in the app's settings).")
+    print("Redeploy the app, or press Save in its Settings, to use it.")
+    return 0
+
 MIN_LENGTH = 8
 
 
@@ -72,12 +126,17 @@ def main() -> int:
     pw.add_argument("--stdin", action="store_true", help="read the password from standard input")
     dp = sub.add_parser("deploy", help="deploy an app and print its log")
     dp.add_argument("name")
+    cd = sub.add_parser("create-db", help="give an app its own Postgres database and set DATABASE_URL")
+    cd.add_argument("name")
+    cd.add_argument("--replace", action="store_true", help="replace an existing DATABASE_URL")
     args = parser.parse_args()
     ensure_dirs()
     if args.command == "set-password":
         return set_password(args.stdin)
     if args.command == "deploy":
         return deploy_app(args.name)
+    if args.command == "create-db":
+        return create_db(args.name, args.replace)
     return 1
 
 

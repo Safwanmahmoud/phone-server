@@ -25,7 +25,8 @@ from starlette.staticfiles import StaticFiles
 
 from . import __version__, apps, auth, db, deploy, logs, pm2, system
 from .apps import ApiError, Conflict, Invalid, NotFound
-from .config import DATA, DASHBOARD_PORT, HOME, PUBLIC_PORT, SSH, SSH_KEYGEN, STATIC_DIR, SYSTEM_SERVICES, clean_env, ensure_dirs
+from .config import (DATA, DASHBOARD_PORT, HOME, OPTIONAL_SERVICES, PUBLIC_PORT, SSH, SSH_KEYGEN, STATIC_DIR,
+                     SYSTEM_SERVICES, clean_env, ensure_dirs)
 
 ensure_dirs()
 limiter = auth.LoginLimiter()
@@ -144,7 +145,8 @@ async def list_apps(request: Request) -> JSONResponse:
     latest = db.latest_deployments()
     active = db.active_apps()
     items = [apps.public(a, procs.get(a["name"]), latest.get(a["name"]), a["name"] in active) for a in db.list_apps()]
-    services = [{"name": n, "label": label, "process": procs.get(n)} for n, label in SYSTEM_SERVICES.items()]
+    services = [{"name": n, "label": label, "process": procs.get(n)} for n, label in SYSTEM_SERVICES.items()
+                if n not in OPTIONAL_SERVICES or n in procs]
     return JSONResponse({"apps": items, "services": services, "pm2_error": pm2_error})
 
 
