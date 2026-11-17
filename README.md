@@ -9,10 +9,14 @@ From the dashboard you can:
   app, and checks that it answers. After that you can redeploy, start, stop, restart, read live logs,
   see each deploy's output, and edit the start command, port and environment variables.
 - **Terminal**: open a shell on the phone in the browser.
-- **Settings**: create the phone's SSH key for GitHub, change the theme, sign out.
+- **Settings**: create the phone's SSH key for GitHub, connect Cloudflare so apps can have public
+  domains, change the theme, sign out.
 
-You reach it over [Tailscale](https://tailscale.com) at `http://<phone>:8080`, for example
-`http://oppo-a76:8080`.
+You reach it over [Tailscale](https://tailscale.com) at `http://<phone>:8080`, where `<phone>` is the
+phone's name on your tailnet, for example `http://my-phone:8080`.
+
+It has been used on a mid-range phone (Snapdragon 680, 6 GB RAM, Android 13) to run a few web apps, a
+Postgres database and a small language model at once.
 
 ## How it fits together
 
@@ -41,12 +45,12 @@ On the phone, in Termux (installed from F-Droid):
 
 ```sh
 pkg install -y git
-git clone <this repo> ~/phone-server      # or copy it over with scripts/push.sh, below
+git clone https://github.com/Safwanmahmoud/phone-server ~/phone-server   # or copy it with scripts/push.sh, below
 bash ~/phone-server/scripts/install.sh
 cd ~/phone-server && .venv/bin/python -m server.cli set-password
 ```
 
-`install.sh` installs what's missing (Python, Node.js, git, ttyd, Caddy, PM2) and creates the
+`install.sh` installs what's missing (Python, Node.js, git, ttyd, Caddy, cloudflared, PM2) and creates the
 virtual environment. It then starts the four services and saves them so PM2 can bring them back.
 You can run it again to update.
 
@@ -79,6 +83,14 @@ Android stops apps in the background. To keep the server up:
    ```
 
    On Android 14 and later, Developer options → **Disable child process restrictions** does the same.
+
+   **Without a computer:** run `pkg install android-tools` in Termux, then turn on Developer options →
+   **Wireless debugging** (Wi-Fi needed). Tap **Pair device with pairing code** and, while that popup is
+   open, run `adb pair <ip>:<pairing-port> <code>`. Then run `adb connect <ip>:<port>` with the port
+   shown on the Wireless debugging page, and run the commands above. Turn Wireless debugging off
+   afterwards. The settings stay after a reboot. On Android 13 only the two `device_config` lines
+   matter. ColorOS refuses the `settings put` line unless **Disable permission monitoring** is on, and
+   it isn't needed there.
 5. **Battery level on the Overview:** install **Termux:API** from F-Droid, then run `pkg install termux-api`.
 6. Keep the phone **plugged in**.
 
@@ -131,6 +143,38 @@ password. It sets the app's `DATABASE_URL` without printing the password. Redepl
 Save in its Settings, to use the new database. `psql -U postgres` works on the phone without a password.
 Postgres runs about 9 processes, so turn off the phantom process killer (above).
 
+### Public domains
+
+Apps can be public at your own domains, over HTTPS, through a free
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
+`cloudflared` makes only outgoing connections, so nothing is opened on your router. It works on mobile
+data and doesn't break when your home IP address changes.
+
+1. Add your domain to a free Cloudflare account (**Add a domain**, Free plan).
+2. At your registrar, replace the nameservers with the two that Cloudflare shows. On Namecheap: **Domain
+   List → Manage → Nameservers → Custom DNS**. Cloudflare copies your existing DNS records when you add the
+   domain, so email and other records keep working.
+3. Create an API token at **Cloudflare → My Profile → API Tokens → Create Token → Custom token**, with
+   *Account · Cloudflare Tunnel · Edit*, *Zone · DNS · Edit* and *Zone · Zone · Read*, for all zones.
+4. In the dashboard, paste it in **Settings → Public access**. Add the domain at Cloudflare first: the
+   dashboard finds your account through it. You don't have to wait for the nameservers. The dashboard creates a tunnel called
+   `phone-server` and runs `cloudflared` under PM2 as `ps-tunnel`.
+5. In an app's **Settings** tab, add its domains under **Public domains**, one per line. Add both
+   `example.com` and `www.example.com` if you want both. Saving creates the DNS records and sends that
+   hostname to the app's port.
+
+If a name already points somewhere else at Cloudflare, the dashboard asks before replacing it. Removing a
+domain, or deleting the app, removes only the records the dashboard made. Changing an app's port moves its
+domains too.
+
+**Only the domains listed on apps are public.** Cloudflare answers any other name with a 404, and the
+dashboard, the terminal and the database are never reachable through the tunnel. The API token is kept in
+`~/.phone-server/cloudflare.json` (readable only by Termux).
+
+On Android, `cloudflared` logs `Failed to fetch features` and `Failed to initialize DNS local resolver`,
+because Android has no `/etc/resolv.conf`. These are harmless: it finds Cloudflare through a built-in
+fallback and connects normally.
+
 **Packages that need Rust** (`pydantic-core`, and so FastAPI; `cryptography`; `orjson`): run
 `pkg install rust` first. Expect the first install to take a long time on a phone.
 
@@ -153,6 +197,7 @@ server/            dashboard (Starlette)
   deploy.py        clone/fetch → pip or npm (+ build) → detect start command → PM2 → health check
   pm2.py           talks to the PM2 bridge, or the pm2 command if the bridge is down
   apps.py          validation and API errors
+  tunnel.py        Cloudflare Tunnel: API token, cloudflared under PM2, app domains and DNS records
   system.py        memory, storage, CPU clock, temperatures, battery
   db.py            SQLite: apps and deployments
   auth.py, cli.py  password and sign-in

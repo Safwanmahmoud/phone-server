@@ -29,9 +29,10 @@ SYSTEM_SERVICES = {
     "ps-caddy": "Web gateway (Caddy)",
     "ps-terminal": "Terminal (ttyd)",
     "ps-postgres": "PostgreSQL",
+    "ps-tunnel": "Public access (Cloudflare Tunnel)",
 }
-# Shown only once set up (scripts/setup-postgres.sh).
-OPTIONAL_SERVICES = {"ps-postgres"}
+# Shown only once set up (scripts/setup-postgres.sh, Settings → Public access).
+OPTIONAL_SERVICES = {"ps-postgres", "ps-tunnel"}
 POSTGRES_PORT = 5432
 
 
@@ -45,6 +46,7 @@ PM2 = _bin("pm2")
 NPM = _bin("npm")
 SSH = _bin("ssh")
 SSH_KEYGEN = _bin("ssh-keygen")
+CLOUDFLARED = _bin("cloudflared")
 # The system Python, not the dashboard's own venv: app venvs are created from it.
 PYTHON = str(PREFIX / "bin" / "python") if (PREFIX / "bin" / "python").exists() else _bin("python3")
 

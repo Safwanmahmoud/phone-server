@@ -478,6 +478,17 @@ textarea { resize: vertical; min-height: 84px; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; font-size: 13.5px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.steps b { color: var(--text); font-weight: 600; }
+
+.domain-list { display: grid; gap: 8px; }
+.domain-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
+.domain-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.domain-main .link { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.card-pad .form { padding: 0; }
+.ns-hint { margin-top: 10px; display: grid; gap: 6px; }
+.ns-hint p { margin: 0; }
+.plain-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13.5px; }
+.card-pad h3 { margin-bottom: -4px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 
 /* ---------- login ---------- */
 

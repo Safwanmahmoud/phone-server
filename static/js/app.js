@@ -22,6 +22,7 @@ const ICONS = {
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M14 9l2 2"/>',
   branch: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9c0 5-6 4-11 8.5"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18Z"/>',
   logout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5"/><path d="M5 12h11"/>',
 };
 
@@ -171,7 +172,7 @@ const isUp = (p) => p?.status === 'online';
 // ---------- API ----------
 
 class ApiError extends Error {
-  constructor(message, status) { super(message); this.status = status; }
+  constructor(message, status, data = null) { super(message); this.status = status; this.data = data; }
 }
 
 async function api(path, { method = 'GET', body } = {}) {
@@ -190,7 +191,7 @@ async function api(path, { method = 'GET', body } = {}) {
     showLogin({ configured: true, error: 'Your session ended. Sign in again.' });
     throw new ApiError('Signed out', 401);
   }
-  if (!res.ok) throw new ApiError(data?.error || `Request failed (${res.status})`, res.status);
+  if (!res.ok) throw new ApiError(data?.error || `Request failed (${res.status})`, res.status, data);
   return data;
 }
 
@@ -330,7 +331,8 @@ function appRow(app) {
   return h('a', { class: 'row row-link', href: `#/apps/${enc(app.name)}` },
     h('div', { class: 'row-main' },
       h('div', { class: 'row-title' }, app.name),
-      h('div', { class: 'row-meta' }, h('span', { class: 'truncate' }, repoLabel(app.repo_url)), h('span', { class: 'sep' }, '·'), app.branch, h('span', { class: 'sep' }, '·'), `port ${app.port}`)),
+      h('div', { class: 'row-meta' }, h('span', { class: 'truncate' }, repoLabel(app.repo_url)), h('span', { class: 'sep' }, '·'), app.branch, h('span', { class: 'sep' }, '·'),
+        app.domains?.length ? h('span', { class: 'truncate' }, app.domains[0]) : `port ${app.port}`)),
     h('div', { class: 'row-stats' },
       stat('CPU', isUp(p) ? `${p.cpu}%` : '—'),
       stat('Memory', isUp(p) ? fmtBytes(p.memory) : '—'),
@@ -504,6 +506,7 @@ function viewApp(main, route) {
           h('button', { class: 'btn btn-primary', disabled, onclick: redeploy }, icon('deploy', 16), deploying ? 'Deploying…' : 'Redeploy'))),
       pm2Banner(app.pm2_error) || '',
       h('div', { class: 'stat-strip' },
+        app.domains?.length ? stat('Domain', h('a', { class: 'link', href: `https://${app.domains[0]}`, target: '_blank', rel: 'noopener' }, app.domains[0])) : null,
         stat('Port', h('a', { class: 'link mono', href: url, target: '_blank', rel: 'noopener' }, app.port)),
         stat('CPU', up ? `${p.cpu}%` : '—'),
         stat('Memory', up ? fmtBytes(p.memory) : '—'),
@@ -699,7 +702,73 @@ function drawSettings(body, app) {
       },
     }, icon('trash', 16), 'Delete app'));
 
-  body.replaceChildren(form, danger);
+  const domains = h('section', { class: 'card card-pad' });
+  body.replaceChildren(form, domains, danger);
+  drawDomains(domains, app.name);
+}
+
+// Cloudflare's view of a domain's site: active, or waiting for the nameserver change at the registrar.
+function zoneBadge(d) {
+  if (!d.zone) return badge(['bad', 'Not on Cloudflare']);
+  if (d.zone_status === 'active') return badge(['ok', 'Active']);
+  if (d.zone_status === 'pending') return badge(['warn', 'Waiting for nameservers']);
+  return badge(['muted', d.zone_status]);
+}
+function nameserverHint(servers, site) {
+  if (!servers?.length) return null;
+  return h('div', { class: 'ns-hint' },
+    h('p', { class: 'small muted' }, `At Namecheap, open ${site} → Nameservers → Custom DNS and enter:`),
+    servers.map((s) => codeLine(s)),
+    h('p', { class: 'small muted' }, 'It usually takes under an hour, sometimes up to a day.'));
+}
+
+async function drawDomains(card, name) {
+  const title = h('h2', {}, 'Public domains');
+  let info;
+  try { info = await api(`/api/apps/${enc(name)}/domains`); } catch (e) {
+    card.replaceChildren(title, h('p', { class: 'form-error' }, e.message));
+    return;
+  }
+  if (!info.connected) {
+    card.replaceChildren(title,
+      h('p', { class: 'muted' }, 'Put this app on the internet at your own domain. Connect Cloudflare first, in ',
+        h('a', { class: 'link', href: '#/settings' }, 'Settings → Public access'), '.'));
+    return;
+  }
+  const list = info.domains.length ? h('div', { class: 'domain-list' }, info.domains.map((d) => h('div', { class: 'domain-row' },
+    h('div', { class: 'domain-main' },
+      h('a', { class: 'link mono', href: `https://${d.host}`, target: '_blank', rel: 'noopener' }, d.host, ' ', icon('external', 14)),
+      d.zone !== undefined ? zoneBadge(d) : null),
+    nameserverHint(d.name_servers, d.zone)))) : '';
+
+  const ta = textarea(info.domains.map((d) => d.host).join('\n'), {
+    class: 'mono', rows: 3, placeholder: 'example.com\nwww.example.com', spellcheck: 'false', autocapitalize: 'off',
+  });
+  const err = h('p', { class: 'form-error', role: 'alert' }, info.error || '');
+  const save = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save domains');
+  const submit = async (replace) => {
+    err.textContent = '';
+    save.disabled = true;
+    save.textContent = 'Setting up DNS…';
+    try {
+      const r = await api(`/api/apps/${enc(name)}/domains`, { method: 'PUT', body: { domains: ta.value.split(/[\s,]+/).filter(Boolean), replace } });
+      toast(r.message);
+      await drawDomains(card, name);
+    } catch (ex) {
+      if (ex.data?.code === 'dns_conflict' && !replace && confirm(ex.message)) return submit(true);
+      err.textContent = ex.message;
+    } finally {
+      save.disabled = false;
+      save.textContent = 'Save domains';
+    }
+  };
+  card.replaceChildren(title,
+    h('p', { class: 'muted' }, 'Anyone can open the app at these addresses, over HTTPS. The dashboard stays private.'),
+    list,
+    h('form', { class: 'form', onsubmit: (e) => { e.preventDefault(); submit(false); } },
+      field('Domains', ta, 'One per line. Add both example.com and www.example.com if you want both. The domain must be a site in your Cloudflare account.'),
+      err,
+      h('div', { class: 'form-actions' }, save)));
 }
 
 // ---------- terminal ----------
@@ -718,6 +787,7 @@ function viewTerminal(main) {
 function viewSettings(main) {
   const keyCard = h('section', { class: 'card card-pad' }, h('h2', {}, 'GitHub access'), h('p', { class: 'muted' }, 'Loading…'));
   const aboutCard = h('section', { class: 'card card-pad' }, h('h2', {}, 'About'), h('p', { class: 'muted' }, 'Loading…'));
+  const publicCard = h('section', { class: 'card card-pad' }, h('h2', {}, 'Public access'), h('p', { class: 'muted' }, 'Loading…'));
 
   const themeButtons = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Theme' });
   const drawTheme = () => themeButtons.replaceChildren(...[['dark', 'Dark'], ['light', 'Light'], ['system', 'Match device']].map(([key, label]) =>
@@ -728,6 +798,7 @@ function viewSettings(main) {
   main.append(
     pageHead('Settings'),
     keyCard,
+    publicCard,
     h('section', { class: 'card card-pad' }, h('h2', {}, 'Appearance'), themeButtons),
     h('section', { class: 'card card-pad' },
       h('h2', {}, 'Account'),
@@ -737,6 +808,7 @@ function viewSettings(main) {
     aboutCard);
 
   drawKey(keyCard);
+  drawPublic(publicCard);
   api('/api/about').then((a) => {
     const dl = h('dl', { class: 'kv' });
     for (const [k, v] of [['Phone Server', a.version], ...Object.entries(a.versions), ['Data folder', a.data_dir],
@@ -794,6 +866,84 @@ async function drawKey(card) {
     h('p', { class: 'small muted' }, 'A key on your account can read every repository you can. To allow just one, add it as a deploy key in that repository’s settings instead (a deploy key works for one repository only).'),
     h('div', { class: 'form-actions start' }, test),
     result);
+}
+
+const TUNNEL_STATUS = { healthy: ['ok', 'Connected'], degraded: ['warn', 'Degraded'], down: ['bad', 'Down'], inactive: ['muted', 'Not connected yet'] };
+const extLink = (href, text) => h('a', { class: 'link', href, target: '_blank', rel: 'noopener' }, text);
+
+async function drawPublic(card) {
+  const title = h('h2', {}, 'Public access');
+  let s;
+  try { s = await api('/api/settings/cloudflare'); } catch (e) {
+    card.replaceChildren(title, h('p', { class: 'form-error' }, e.message));
+    return;
+  }
+  if (!s.connected) {
+    const token = h('input', { type: 'password', autocomplete: 'off', required: true, spellcheck: 'false', class: 'mono' });
+    const err = h('p', { class: 'form-error', role: 'alert' });
+    const go = h('button', { class: 'btn btn-primary', type: 'submit' }, icon('globe', 16), 'Connect');
+    card.replaceChildren(title,
+      h('p', { class: 'muted' }, 'Put apps on the internet at your own domains, with HTTPS, through a free Cloudflare Tunnel. Nothing is opened on your router, and the dashboard stays private.'),
+      h('ol', { class: 'steps' },
+        h('li', {}, 'Make a free ', extLink('https://dash.cloudflare.com/sign-up', 'Cloudflare account'),
+          ', choose ', h('b', {}, 'Add a domain'), ', enter the domain you bought, and pick the ', h('b', {}, 'Free'), ' plan.'),
+        h('li', {}, 'Cloudflare shows two nameservers. At Namecheap, open ', h('b', {}, 'Domain List → Manage → Nameservers'),
+          ', choose ', h('b', {}, 'Custom DNS'), ', enter both, and save.'),
+        h('li', {}, 'Open ', extLink('https://dash.cloudflare.com/profile/api-tokens', 'Cloudflare → API Tokens'), ' → ', h('b', {}, 'Create Token'),
+          ' → ', h('b', {}, 'Custom token'), '. Add these permissions: ',
+          h('b', {}, 'Account · Cloudflare Tunnel · Edit'), ', ', h('b', {}, 'Zone · DNS · Edit'), ' and ', h('b', {}, 'Zone · Zone · Read'),
+          '. Under Zone Resources choose ', h('b', {}, 'All zones'), '.'),
+        h('li', {}, 'Paste the token below. You don’t have to wait for the nameservers, but the domain must already be added at Cloudflare.')),
+      s.installed ? '' : h('div', { class: 'banner banner-bad' }, 'cloudflared isn’t installed. On the phone, run: pkg install cloudflared'),
+      h('form', {
+        class: 'form',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          err.textContent = '';
+          go.disabled = true;
+          go.textContent = 'Connecting…';
+          try {
+            const r = await api('/api/settings/cloudflare', { method: 'POST', body: { api_token: token.value } });
+            token.value = '';
+            toast(r.message);
+            await drawPublic(card);
+          } catch (ex) {
+            err.textContent = ex.message;
+            go.disabled = false;
+            go.replaceChildren(icon('globe', 16), 'Connect');
+          }
+        },
+      }, field('Cloudflare API token', token, 'Kept on the phone only.'), err, h('div', { class: 'form-actions start' }, go)));
+    return;
+  }
+
+  const dl = h('dl', { class: 'kv' },
+    h('dt', {}, 'Account'), h('dd', {}, s.account || '—'),
+    h('dt', {}, 'Tunnel'), h('dd', {}, h('span', { class: 'mono' }, s.tunnel), ' ', s.tunnel_status ? badge(TUNNEL_STATUS[s.tunnel_status] || ['muted', s.tunnel_status]) : null),
+    h('dt', {}, 'cloudflared'), h('dd', {}, badge(processStatus(s.process))));
+  const zones = s.zones?.length
+    ? h('div', { class: 'domain-list' }, s.zones.map((z) => h('div', { class: 'domain-row' },
+      h('div', { class: 'domain-main' }, h('span', { class: 'mono' }, z.name), zoneBadge({ zone: z.name, zone_status: z.status })),
+      z.status === 'active' ? null : nameserverHint(z.name_servers, z.name))))
+    : s.error ? '' : h('p', { class: 'muted' }, 'No sites yet. Add your domain at ', extLink('https://dash.cloudflare.com', 'Cloudflare'), ', then reload this page.');
+  const used = s.domains?.length
+    ? h('ul', { class: 'plain-list' }, s.domains.map((d) => h('li', {}, extLink(`https://${d.host}`, d.host), h('span', { class: 'muted' }, ` → ${d.app}`))))
+    : h('p', { class: 'muted small' }, 'No app has a domain yet. Add one in an app’s Settings tab.');
+  const disconnect = h('button', {
+    class: 'btn',
+    onclick: async () => {
+      if (!confirm('Disconnect Cloudflare? Apps stop being reachable at their domains until you connect again.')) return;
+      disconnect.disabled = true;
+      try { toast((await api('/api/settings/cloudflare', { method: 'DELETE' })).message); await drawPublic(card); }
+      catch (e) { toast(e.message, 'bad'); disconnect.disabled = false; }
+    },
+  }, 'Disconnect');
+  card.replaceChildren(title, dl,
+    s.error ? h('p', { class: 'form-error' }, s.error) : '',
+    h('h3', {}, 'Sites'), zones,
+    h('h3', {}, 'Public apps'), used,
+    h('p', { class: 'small muted' }, 'Only the domains you add to apps are public. Requests for any other name get a 404, and the dashboard is never reachable through the tunnel.'),
+    h('div', { class: 'form-actions start' }, disconnect));
 }
 
 // ---------- sign in / out ----------

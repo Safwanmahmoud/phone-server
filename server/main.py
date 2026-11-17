@@ -23,7 +23,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import __version__, apps, auth, db, deploy, logs, pm2, system
+from . import __version__, apps, auth, db, deploy, logs, pm2, system, tunnel
 from .apps import ApiError, Conflict, Invalid, NotFound
 from .config import (DATA, DASHBOARD_PORT, HOME, OPTIONAL_SERVICES, PUBLIC_PORT, SSH, SSH_KEYGEN, STATIC_DIR,
                      SYSTEM_SERVICES, clean_env, ensure_dirs)
@@ -214,6 +214,11 @@ async def update_app(request: Request) -> JSONResponse:
                 message = "Saved and restarted."
             except (ApiError, pm2.PM2Error) as e:
                 message = f"Saved, but couldn't restart: {e}"
+    if "port" in changed and app["domains"]:
+        try:
+            await tunnel.sync()
+        except ApiError as e:
+            message += f" Couldn't move its domains to the new port: {e}"
     if source_changed:
         message += " Redeploy to pull the new code."
     return ok(message)
@@ -221,11 +226,23 @@ async def update_app(request: Request) -> JSONResponse:
 
 async def delete_app(request: Request) -> JSONResponse:
     name = request.path_params["name"]
-    require_app(name)
+    app = require_app(name)
     if db.active_deployment(name):
         raise Conflict("Wait for the deploy to finish before deleting this app.")
+    warning = await tunnel.forget_app(app)
     await deploy.remove(name)
-    return ok(f"Deleted {name}.")
+    return ok(f"Deleted {name}." + (f" {warning}" if warning else ""))
+
+
+async def get_domains(request: Request) -> JSONResponse:
+    return JSONResponse(await tunnel.domain_info(require_app(request.path_params["name"])))
+
+
+async def put_domains(request: Request) -> JSONResponse:
+    app = require_app(request.path_params["name"])
+    data = await json_body(request)
+    message = await tunnel.set_domains(app, data.get("domains"), replace=data.get("replace") is True)
+    return ok(message, **await tunnel.domain_info(require_app(app["name"])))
 
 
 async def deploy_app(request: Request) -> JSONResponse:
@@ -315,6 +332,19 @@ async def test_github(request: Request) -> JSONResponse:
     return JSONResponse({"ok": False, "message": lines[-1] if lines else "Couldn't connect to GitHub."})
 
 
+async def get_cloudflare(request: Request) -> JSONResponse:
+    return JSONResponse(await tunnel.status())
+
+
+async def connect_cloudflare(request: Request) -> JSONResponse:
+    data = await json_body(request)
+    return ok(await tunnel.connect(data.get("api_token")))
+
+
+async def disconnect_cloudflare(request: Request) -> JSONResponse:
+    return ok(await tunnel.disconnect())
+
+
 async def index(request: Request) -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
@@ -343,7 +373,7 @@ class Guard(BaseHTTPMiddleware):
 
 
 async def api_error(request: Request, exc: ApiError) -> JSONResponse:
-    return JSONResponse({"error": str(exc)}, status_code=exc.status)
+    return JSONResponse({**exc.extra, "error": str(exc)}, status_code=exc.status)
 
 
 async def pm2_error(request: Request, exc: pm2.PM2Error) -> JSONResponse:
@@ -377,10 +407,15 @@ routes = [
     Route("/api/apps/{name}/logs", app_logs),
     Route("/api/apps/{name}/logs", clear_app_logs, methods=["DELETE"]),
     Route("/api/apps/{name}/deployments", list_deployments),
+    Route("/api/apps/{name}/domains", get_domains),
+    Route("/api/apps/{name}/domains", put_domains, methods=["PUT"]),
     Route("/api/deployments/{id:int}/log", deployment_log),
     Route("/api/settings/ssh-key", get_ssh_key),
     Route("/api/settings/ssh-key", create_ssh_key, methods=["POST"]),
     Route("/api/settings/github-test", test_github, methods=["POST"]),
+    Route("/api/settings/cloudflare", get_cloudflare),
+    Route("/api/settings/cloudflare", connect_cloudflare, methods=["POST"]),
+    Route("/api/settings/cloudflare", disconnect_cloudflare, methods=["DELETE"]),
     Mount("/static", StaticFiles(directory=STATIC_DIR), name="static"),
 ]
 

@@ -8,7 +8,7 @@ cd "$ROOT"
 
 echo "→ Packages"
 missing=()
-for pkg in python git nodejs-lts ttyd caddy openssh; do
+for pkg in python git nodejs-lts ttyd caddy openssh cloudflared; do
   dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
 done
 if ((${#missing[@]})); then

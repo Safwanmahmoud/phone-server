@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS app (
     detected_cmd TEXT NOT NULL DEFAULT '',
     port         INTEGER NOT NULL UNIQUE,
     env          TEXT NOT NULL DEFAULT '{}',
+    domains      TEXT NOT NULL DEFAULT '[]',
     created_at   REAL NOT NULL,
     updated_at   REAL NOT NULL
 );
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS deployment (
 CREATE INDEX IF NOT EXISTS deployment_app_idx ON deployment (app, id DESC);
 """
 
-APP_COLUMNS = {"repo_url", "branch", "start_cmd", "detected_cmd", "port", "env"}
+APP_COLUMNS = {"repo_url", "branch", "start_cmd", "detected_cmd", "port", "env", "domains"}
+JSON_COLUMNS = ("env", "domains")
 DEPLOYMENT_COLUMNS = {"status", "commit_sha", "commit_msg", "error", "warning", "started_at", "finished_at"}
 
 
@@ -57,6 +59,9 @@ def init() -> None:
     with connect() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(app)")}
+        if "domains" not in columns:  # added after the first release
+            conn.execute("ALTER TABLE app ADD COLUMN domains TEXT NOT NULL DEFAULT '[]'")
     # A deploy can't survive a dashboard restart, so close out any that were cut off.
     with connect() as conn:
         conn.execute(
@@ -70,6 +75,7 @@ def _app(row: sqlite3.Row | None) -> dict | None:
         return None
     app = dict(row)
     app["env"] = json.loads(app["env"] or "{}")
+    app["domains"] = json.loads(app["domains"] or "[]")
     return app
 
 
@@ -99,8 +105,9 @@ def update_app(name: str, **fields) -> None:
         raise ValueError(f"unknown app columns: {unknown}")
     if not fields:
         return
-    if "env" in fields:
-        fields["env"] = json.dumps(fields["env"])
+    for col in JSON_COLUMNS:
+        if col in fields:
+            fields[col] = json.dumps(fields[col])
     sets = ", ".join(f"{col} = ?" for col in fields)
     with connect() as conn:
         conn.execute(f"UPDATE app SET {sets}, updated_at = ? WHERE name = ?", (*fields.values(), time.time(), name))
@@ -109,6 +116,11 @@ def update_app(name: str, **fields) -> None:
 def delete_app(name: str) -> None:
     with connect() as conn:
         conn.execute("DELETE FROM app WHERE name = ?", (name,))
+
+
+def domain_owner(host: str) -> str | None:
+    """The app that already uses this hostname, if any."""
+    return next((a["name"] for a in list_apps() if host in a["domains"]), None)
 
 
 def used_ports(exclude: str | None = None) -> set[int]:

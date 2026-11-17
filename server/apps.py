@@ -13,10 +13,11 @@ from .config import APP_PORTS, GIT, RESERVED_PORTS, git_env
 class ApiError(Exception):
     status = 400
 
-    def __init__(self, message: str, status: int | None = None):
+    def __init__(self, message: str, status: int | None = None, extra: dict | None = None):
         super().__init__(message)
         if status is not None:
             self.status = status
+        self.extra = extra or {}  # sent alongside "error" in the JSON reply
 
 
 class Invalid(ApiError):
@@ -185,6 +186,7 @@ def git_error(stderr: str) -> str:
 
 def public(app: dict, process: dict | None, last_deploy: dict | None, active: bool, include_env: bool = False) -> dict:
     out = {k: app[k] for k in ("name", "repo_url", "branch", "start_cmd", "detected_cmd", "port", "created_at", "updated_at")}
+    out["domains"] = app.get("domains", [])
     out["process"] = process
     out["last_deploy"] = last_deploy
     out["active_deploy"] = active
