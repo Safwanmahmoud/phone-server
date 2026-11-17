@@ -209,3 +209,7 @@ Caddyfile, ecosystem.config.js
 
 Data lives in `~/.phone-server` (`PS_DATA`): `phone-server.db`, `apps/<name>/{repo,venv,logs,pm2.json}`,
 `logs/` for the dashboard's own services, `password.json`, and `secret.key`.
+
+## License
+
+[MIT](LICENSE)
